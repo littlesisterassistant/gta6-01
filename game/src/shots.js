@@ -1,79 +1,92 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+'use strict';
+/* ?shot=<scene>&seed=<n> staging for reproducible screenshots.
+   Scenes: start, play, chase, results. */
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
-
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function getShotParams() {
+  const q = new URLSearchParams(window.location.search);
+  return { shot: q.get('shot') || '', seed: parseInt(q.get('seed') || '1', 10) };
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+function stageShot(G, shot) {
+  const p = G.player;
+  if (shot === 'start') {
+    G.state = 'menu';
+    G.cam.x = 1000; G.cam.y = 600;
+    return;
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
+  if (shot === 'play') {
+    // Jax on foot at a busy intersection, mission 1 live, traffic + peds around.
+    G.state = 'playing';
+    p.x = CFG.vRoads[2]; p.y = CFG.hRoads[1];
+    p.angle = Math.PI / 2;
+    startMission(G, 1);
+    G.bannerT = 0;
+    spawnTrafficNear(G, p.x, p.y, 6);
+    // A few pedestrians strolling past the player.
+    for (let i = 0; i < 5; i++) {
+      G.peds.push({
+        x: p.x + (i - 2) * 70, y: p.y + (i % 2 === 0 ? 90 : -90),
+        angle: G.rng() * Math.PI * 2, vx: 0, vy: 0,
+        state: 'walk', speed: randRange(G.rng, 45, 75), hp: 30,
+        color: pick(G.rng, PED_COLORS), downT: 0, turnT: 3,
+        fleeX: 0, fleeY: 0,
+      });
     }
+    return;
   }
-  return best;
+  if (shot === 'chase') {
+    // Jax driving the Comet GT at speed, wanted 3, two police cars on his tail.
+    G.state = 'playing';
+    const comet = makeCar('sport', CFG.vRoads[2], CFG.hRoads[2] - 100, Math.PI / 2, 'player');
+    comet.speed = 380;
+    comet.hp = 300; // staged durability: the shot should show a chase, not a wreck
+    G.cars.push(comet);
+    p.inCar = comet;
+    p.x = comet.x; p.y = comet.y; p.angle = comet.angle;
+    p.wanted = 3;
+    p.lastCrimeT = G.time;
+    p.cash = 2400;
+    p.weapon = 'pistol'; p.ammo = 24;
+    startMission(G, 3);
+    G.mission.stage = 2;
+    G.mission.targets = [{ x: G.world.places.garage.x, y: G.world.places.garage.y, label: "Lupe's Garage", r: 70 }];
+    G.bannerT = 0;
+    for (let i = 0; i < 2; i++) {
+      // Trail behind the southbound Comet (north of it), close enough to read in frame.
+      const cop = makeCar('police', comet.x - 30 + i * 70, comet.y - 200 - i * 80, Math.PI / 2, 'police');
+      cop.speed = 300; // trail, not ram, during the shot window
+      G.cars.push(cop);
+    }
+    // Auto-drive the Comet straight down the avenue for the shot.
+    G.autoDrive = true;
+    // Clear the avenue ahead so the shot shows a chase, not a pile-up.
+    G.cars = G.cars.filter(c => c.driver !== 'traffic' || Math.abs(c.x - CFG.vRoads[2]) > 120 || c.y < comet.y - 100 || c.y > comet.y + 900);
+    return;
+  }
+  if (shot === 'results') {
+    // Mission-complete overlay after Package Run.
+    G.state = 'mission-complete';
+    G.overlayMission = MISSIONS[1];
+    p.cash = 1300;
+    p.missionsDone = 2;
+    p.x = G.world.places.pier.x - 200; p.y = G.world.places.pier.y;
+    G.cam.x = clamp(p.x - CFG.viewW / 2, 0, CFG.worldW - CFG.viewW);
+    G.cam.y = clamp(p.y - CFG.viewH / 2, 0, CFG.worldH - CFG.viewH);
+    return;
+  }
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+function spawnTrafficNear(G, x, y, n) {
+  for (let i = 0; i < n; i++) {
+    const p = randomRoadPoint(G.rng);
+    let tries = 0;
+    while (Math.hypot(p.x - x, p.y - y) > 700 && tries++ < 8) {
+      const q = randomRoadPoint(G.rng); p.x = q.x; p.y = q.y; p.axis = q.axis;
+    }
+    const car = makeCar(pick(G.rng, ['compact', 'sedan', 'taxi', 'sedan']), p.x, p.y, 0, 'traffic');
+    car.dir = p.axis === 'v' ? (G.rng() < 0.5 ? 1 : 3) : (G.rng() < 0.5 ? 0 : 2);
+    car.angle = [0, Math.PI / 2, Math.PI, -Math.PI / 2][car.dir];
+    car.speed = car.cruise * 0.7;
+    G.cars.push(car);
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
 }

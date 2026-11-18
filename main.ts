@@ -1,41 +1,67 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
-// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
-// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
-// your own open-world crime game in its place (three.js or any library you vendor under game/),
-// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// SOLMAR HEAT — entrypoint: copies game/ + screenshots/ to the output
+// directory and writes /output/dossier.json with the kit's buildDossier.
+// Node 22, standard library only. Deterministic: same bytes every run.
 import { buildDossier } from './vendor/makefun-game.ts';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const ROOT = resolve(import.meta.dirname ?? '.');
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+function outDir(): string {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--output' && argv[i + 1]) return resolve(argv[i + 1]);
+    if (argv[i].startsWith('--output=')) return resolve(argv[i].slice('--output='.length));
+  }
+  if (process.env.MAKEFUN_OUTPUT_DIR) return resolve(process.env.MAKEFUN_OUTPUT_DIR);
+  return '/output';
+}
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
+// Copy a tree of regular files, skipping dot-names, in sorted order so the
+// output is stable. Directories are recreated; symlinks are refused.
+function copyTree(src: string, dst: string): void {
+  mkdirSync(dst, { recursive: true });
+  const names = readdirSync(src).sort();
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    const from = join(src, name);
+    const to = join(dst, name);
+    const st = statSync(from);
+    if (st.isDirectory()) {
+      copyTree(from, to);
+    } else if (st.isFile()) {
+      cpSync(from, to);
+    } else {
+      throw new Error(`refusing non-regular entry: ${from}`);
+    }
+  }
+}
+
+function main(): void {
+  const out = outDir();
+  const gameSrc = join(ROOT, 'game');
+  const shotsSrc = join(ROOT, 'screenshots');
+  if (!existsSync(gameSrc) || !statSync(gameSrc).isDirectory()) {
+    console.error('game/ is missing');
+    process.exit(2);
+  }
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  copyTree(gameSrc, join(out, 'game'));
+  if (existsSync(shotsSrc) && statSync(shotsSrc).isDirectory()) {
+    copyTree(shotsSrc, join(out, 'screenshots'));
+  } else {
+    mkdirSync(join(out, 'screenshots'), { recursive: true });
+  }
+  const dossier = buildDossier(out, {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
     game_max_files: 993,
-    game_max_bytes: 50331648,
+    game_max_bytes: 48 * 1024 * 1024,
     game_path_max_bytes: 1000,
-  }),
-);
+  });
+  writeFileSync(join(out, 'dossier.json'), dossier);
+  console.log(`wrote ${out} (dossier ${dossier.length} bytes)`);
+}
+
+main();
