@@ -555,8 +555,14 @@ function drawMissionComplete(ctx, G) {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 24px Arial';
   ctx.fillText(m.name + '  •  +' + fmtCash(m.reward), CFG.viewW / 2, 330);
+  if (m.id === 2) {
+    ctx.fillStyle = '#ffd94d';
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('PISTOL UNLOCKED — click to shoot, F to punch', CFG.viewW / 2, 362);
+  }
+  ctx.fillStyle = '#fff';
   ctx.font = '18px Arial';
-  ctx.fillText('Total cash: ' + fmtCash(G.player.cash) + '   •   Missions: ' + m.id + '/5', CFG.viewW / 2, 370);
+  ctx.fillText('Total cash: ' + fmtCash(G.player.cash) + '   •   Missions: ' + m.id + '/5', CFG.viewW / 2, 394);
   ctx.fillStyle = '#ffd94d';
   ctx.font = 'bold 22px Arial';
   ctx.fillText('PRESS ENTER FOR MISSION ' + (m.id + 1), CFG.viewW / 2, 430);

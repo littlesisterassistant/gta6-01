@@ -154,6 +154,8 @@ function completeMission(G) {
   p.cash += m.def.reward;
   p.missionsDone = m.def.id;
   p.score += m.def.reward + (m.def.id === 5 ? 1000 : 0);
+  // Mama Lupe arms Jax after the package run: pistol + 48 rounds.
+  if (m.def.id === 2) { p.weapon = 'pistol'; p.ammo = 48; }
   AudioSys.missionDone();
   G.mission = null;
   if (m.def.id >= MISSIONS.length) {
