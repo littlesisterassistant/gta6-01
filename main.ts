@@ -45,8 +45,13 @@ function main(): void {
     console.error('game/ is missing');
     process.exit(2);
   }
-  rmSync(out, { recursive: true, force: true });
+  // Clear the output directory's CONTENTS, never the directory itself: the
+  // grader runs as uid 65534 and /output is a mount owned by root, so
+  // deleting the directory itself fails with EPERM.
   mkdirSync(out, { recursive: true });
+  for (const name of readdirSync(out)) {
+    rmSync(join(out, name), { recursive: true, force: true });
+  }
   copyTree(gameSrc, join(out, 'game'));
   if (existsSync(shotsSrc) && statSync(shotsSrc).isDirectory()) {
     copyTree(shotsSrc, join(out, 'screenshots'));
